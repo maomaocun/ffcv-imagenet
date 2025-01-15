@@ -33,6 +33,7 @@ from ffcv.fields.rgb_image import CenterCropRGBImageDecoder, \
     RandomResizedCropRGBImageDecoder
 from ffcv.fields.basics import IntDecoder
 
+
 # 定义模型架构和深度的映射
 resnet_depths = {
     'resnet18': 18,
@@ -46,13 +47,6 @@ resnet_depths = {
 Section('model', 'model details').params(
     arch=Param(OneOf(*resnet_depths.keys()), 'Choose model architecture', default='resnet18'),
 )
-
-# Section('resolution', 'resolution scheduling').params(
-#     min_res=Param(int, 'the minimum (starting) resolution', default=160),
-#     max_res=Param(int, 'the maximum (starting) resolution', default=160),
-#     end_ramp=Param(int, 'when to stop interpolating resolution', default=0),
-#     start_ramp=Param(int, 'when to start interpolating resolution', default=0)
-# )
 
 Section('data', 'data related stuff').params(
     train_dataset=Param(str, '.dat file to use for training', required=True),
@@ -88,7 +82,7 @@ Section('training', 'training hyper param stuff').params(
     weight_decay=Param(float, 'weight decay', default=4e-5),
     epochs=Param(int, 'number of epochs', default=30),
     label_smoothing=Param(float, 'label smoothing parameter', default=0.1),
-    distributed=Param(int, 'is distributed?', default=0)
+    distributed=Param(int, 'is distributed?', default=0),
 )
 
 Section('dist', 'distributed training options').params(
@@ -160,6 +154,7 @@ class ImageNetTrainer:
 
         return lr_schedules[lr_schedule_type](epoch)
 
+
     @param('training.momentum')
     @param('training.optimizer')
     @param('training.weight_decay')
@@ -194,6 +189,7 @@ class ImageNetTrainer:
         this_device = f'cuda:{self.gpu}'
         train_path = Path(train_dataset)
         assert train_path.is_file()
+
         self.decoder = RandomResizedCropRGBImageDecoder((resolution, resolution))
         image_pipeline: List[Operation] = [
             self.decoder,
@@ -223,7 +219,6 @@ class ImageNetTrainer:
                             'label': label_pipeline
                         },
                         distributed=distributed)
-
         return loader
 
     @param('data.val_dataset')
@@ -231,13 +226,11 @@ class ImageNetTrainer:
     @param('validation.batch_size')
     @param('validation.resolution')
     @param('training.distributed')
-    def create_val_loader(self, val_dataset, num_workers, batch_size,
-                          resolution, distributed):
+    def create_val_loader(self, val_dataset, num_workers, batch_size,resolution, distributed):
         this_device = f'cuda:{self.gpu}'
         val_path = Path(val_dataset)
         assert val_path.is_file()
-        res_tuple = (resolution, resolution)
-        cropper = CenterCropRGBImageDecoder(res_tuple, ratio=DEFAULT_CROP_RATIO)
+        cropper = CenterCropRGBImageDecoder((resolution, resolution), ratio=DEFAULT_CROP_RATIO)
         image_pipeline = [
             cropper,
             ToTensor(),
@@ -299,12 +292,13 @@ class ImageNetTrainer:
         return stats
 
     @param('model.arch')
-    @param('model.input_size')
+    @param('model.pretrained')
     @param('training.distributed')
-    def create_model_and_scaler(self, arch, size, distributed):
+    @param('validation.resolution')
+    def create_model_and_scaler(self, arch, pretrained, distributed,resolution):
         scaler = GradScaler()
         
-        model = define_model(net_type=arch, size=input_size)
+        model = define_model(net_type=arch, size=resolution)
 
 
         model = model.to(memory_format=ch.channels_last)
