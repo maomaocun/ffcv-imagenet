@@ -1,5 +1,7 @@
 #!/bin/bash
-
+# Required environmental variables for the script:
+export IMAGENET_DIR=/root/autodl-tmp/imagenet
+export WRITE_DIR=/root/autodl-tmp/imagenet_ffcv
 write_dataset () {
     write_path=$WRITE_DIR/${1}_${2}_${3}_${4}.ffcv
     echo "Writing ImageNet ${1} dataset to ${write_path}"

@@ -11,7 +11,7 @@ from torchvision import models
 import torchmetrics
 import numpy as np
 from tqdm import tqdm
-
+from model import define_model
 import os
 import time
 import json
@@ -32,9 +32,15 @@ from ffcv.transforms import ToTensor, ToDevice, Squeeze, NormalizeImage, \
 from ffcv.fields.rgb_image import CenterCropRGBImageDecoder, \
     RandomResizedCropRGBImageDecoder
 from ffcv.fields.basics import IntDecoder
-
+resnet_depths = {
+    'resnet18': 18,
+    'resnet34': 34,
+    'resnet50': 50,
+    'resnet101': 101,
+    'resnet152': 152
+}
 Section('model', 'model details').params(
-    arch=Param(And(str, OneOf(models.__dir__())), default='resnet18'),
+    arch=Param(OneOf([key for key in resnet_depths]), 'Choose model architecture', default='resnet18'),
     pretrained=Param(int, 'is pretrained? (1/0)', default=0)
 )
 
@@ -294,22 +300,31 @@ class ImageNetTrainer:
     @param('training.epochs')
     @param('logging.log_level')
     def train(self, epochs, log_level):
-        for epoch in range(epochs):
-            res = self.get_resolution(epoch)
-            self.decoder.output_size = (res, res)
-            train_loss = self.train_loop(epoch)
+        for model_id in range(20):
+            if self.gpu == 0:
+                init_path = os.path.join(self.log_folder , f'premodel{model_id}_init.pth.tar')
+                ch.save(self.model.state_dict(), init_path)
+                print(f"Model {model_id} initial state saved at {init_path}")
+            for epoch in range(epochs):
+                res = self.get_resolution(epoch)
+                self.decoder.output_size = (res, res)
+                train_loss = self.train_loop(epoch)
 
-            if log_level > 0:
-                extra_dict = {
-                    'train_loss': train_loss,
-                    'epoch': epoch
-                }
+                if log_level > 0:
+                    extra_dict = {
+                        'train_loss': train_loss,
+                        'epoch': epoch
+                    }
 
-                self.eval_and_log(extra_dict)
+                    self.eval_and_log(extra_dict)
 
-        self.eval_and_log({'epoch':epoch})
-        if self.gpu == 0:
-            ch.save(self.model.state_dict(), self.log_folder / 'final_weights.pt')
+            self.eval_and_log({'epoch':epoch})
+            # if self.gpu == 0:
+            #     ch.save(self.model.state_dict(), self.log_folder / 'final_weights.pt')
+            if self.gpu == 0:
+                final_path = os.path.join(self.log_folder , f'premodel{model_id}_trained.pth.tar')
+                ch.save(self.model.state_dict(), final_path)
+                print(f"Model {model_id} final state saved at {final_path}")
 
     def eval_and_log(self, extra_dict={}):
         start_val = time.time()
@@ -329,9 +344,10 @@ class ImageNetTrainer:
     @param('model.pretrained')
     @param('training.distributed')
     @param('training.use_blurpool')
-    def create_model_and_scaler(self, arch, pretrained, distributed, use_blurpool):
+    @param('validation.resolution')
+    def create_model_and_scaler(self, arch, pretrained, distributed, use_blurpool,resolution):
         scaler = GradScaler()
-        model = getattr(models, arch)(pretrained=pretrained)
+        model = define_model(net_type=arch, size=resolution)
         def apply_blurpool(mod: ch.nn.Module):
             for (name, child) in mod.named_children():
                 if isinstance(child, ch.nn.Conv2d) and (np.max(child.stride) > 1 and child.in_channels >= 16): 
@@ -416,9 +432,9 @@ class ImageNetTrainer:
     @param('logging.folder')
     def initialize_logger(self, folder):
         self.val_meters = {
-            'top_1': torchmetrics.Accuracy(task='multiclass', num_classes=1000, compute_on_step=False).to(self.gpu),
-            'top_5': torchmetrics.Accuracy(task='multiclass', num_classes=1000, compute_on_step=False, top_k=5).to(self.gpu),
-            'loss': MeanScalarMetric(compute_on_step=False).to(self.gpu)
+            'top_1': torchmetrics.Accuracy(task='multiclass', num_classes=1000).to(self.gpu),
+            'top_5': torchmetrics.Accuracy(task='multiclass', num_classes=1000, top_k=5).to(self.gpu),
+            'loss': MeanScalarMetric().to(self.gpu)
         }
 
         if self.gpu == 0:

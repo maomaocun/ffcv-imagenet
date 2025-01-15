@@ -1,4 +1,5 @@
-def define_model(net_type='resnet18', size=224):
+from model.resnet_ap import ResNetAP
+def define_model(net_type='resnet'):
 
     # 定义一个字典映射 net_type 到 depth
     resnet_depths = {
@@ -15,23 +16,12 @@ def define_model(net_type='resnet18', size=224):
     else:
         raise Exception('Unknown network architecture: {}'.format(net_type))
 
-    # 根据 net_type 创建对应的模型
-    if net_type == 'resnet':
-        model = RN.ResNet("imagenet",
-                          depth,
-                          1000,
-                          norm_type="batch",
-                          size=size,
-                          nch=3)
-    elif net_type == 'resnet_ap':
-        model = RNAP.ResNetAP("imagenet",
-                              depth,
-                              1000,
-                              width=1.0,
-                              norm_type="batch",
-                              size=size,
-                              nch=3)
-    else:
-        raise Exception('Unknown network architecture: {}'.format(net_type))
+    model = ResNetAP("imagenet",
+                            depth,
+                            1000,
+                            width=1.0,
+                            norm_type="batch",
+                            size=size,
+                            nch=3)
 
     return model
