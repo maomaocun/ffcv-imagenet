@@ -1,5 +1,5 @@
 from model.resnet_ap import ResNetAP
-def define_model(net_type='resnet'):
+def define_model(net_type='resnet', size=224):
 
     # 定义一个字典映射 net_type 到 depth
     resnet_depths = {
