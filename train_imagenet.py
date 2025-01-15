@@ -6,7 +6,7 @@ import torch.distributed as dist
 ch.backends.cudnn.benchmark = True
 ch.autograd.profiler.emit_nvtx(False)
 ch.autograd.profiler.profile(False)
-import model
+from model import define_model
 from torchvision import models
 import torchmetrics
 import numpy as np
@@ -33,17 +33,26 @@ from ffcv.fields.rgb_image import CenterCropRGBImageDecoder, \
     RandomResizedCropRGBImageDecoder
 from ffcv.fields.basics import IntDecoder
 
+# 定义模型架构和深度的映射
+resnet_depths = {
+    'resnet18': 18,
+    'resnet34': 34,
+    'resnet50': 50,
+    'resnet101': 101,
+    'resnet152': 152
+}
+
+# 通过 `choice` 来限制模型架构选择
 Section('model', 'model details').params(
-    arch=Param(And(str, OneOf(models.__dir__())), default='resnet18'),
-    pretrained=Param(int, 'is pretrained? (1/0)', default=0)
+    arch=Param(OneOf(*resnet_depths.keys()), 'Choose model architecture', default='resnet18'),
 )
 
-Section('resolution', 'resolution scheduling').params(
-    min_res=Param(int, 'the minimum (starting) resolution', default=160),
-    max_res=Param(int, 'the maximum (starting) resolution', default=160),
-    end_ramp=Param(int, 'when to stop interpolating resolution', default=0),
-    start_ramp=Param(int, 'when to start interpolating resolution', default=0)
-)
+# Section('resolution', 'resolution scheduling').params(
+#     min_res=Param(int, 'the minimum (starting) resolution', default=160),
+#     max_res=Param(int, 'the maximum (starting) resolution', default=160),
+#     end_ramp=Param(int, 'when to stop interpolating resolution', default=0),
+#     start_ramp=Param(int, 'when to start interpolating resolution', default=0)
+# )
 
 Section('data', 'data related stuff').params(
     train_dataset=Param(str, '.dat file to use for training', required=True),
@@ -79,8 +88,7 @@ Section('training', 'training hyper param stuff').params(
     weight_decay=Param(float, 'weight decay', default=4e-5),
     epochs=Param(int, 'number of epochs', default=30),
     label_smoothing=Param(float, 'label smoothing parameter', default=0.1),
-    distributed=Param(int, 'is distributed?', default=0),
-    use_blurpool=Param(int, 'use blurpool?', default=0)
+    distributed=Param(int, 'is distributed?', default=0)
 )
 
 Section('dist', 'distributed training options').params(
@@ -111,19 +119,6 @@ def get_cyclic_lr(epoch, lr, epochs, lr_peak_epoch):
     xs = [0, lr_peak_epoch, epochs]
     ys = [1e-4 * lr, lr, 0]
     return np.interp([epoch], xs, ys)[0]
-
-class BlurPoolConv2d(ch.nn.Module):
-    def __init__(self, conv):
-        super().__init__()
-        default_filter = ch.tensor([[[[1, 2, 1], [2, 4, 2], [1, 2, 1]]]]) / 16.0
-        filt = default_filter.repeat(conv.in_channels, 1, 1, 1)
-        self.conv = conv
-        self.register_buffer('blur_filter', filt)
-
-    def forward(self, x):
-        blurred = F.conv2d(x, self.blur_filter, stride=1, padding=(1, 1),
-                           groups=self.conv.in_channels, bias=None)
-        return self.conv.forward(blurred)
 
 class ImageNetTrainer:
     @param('training.distributed')
@@ -165,25 +160,6 @@ class ImageNetTrainer:
 
         return lr_schedules[lr_schedule_type](epoch)
 
-    # resolution tools
-    @param('resolution.min_res')
-    @param('resolution.max_res')
-    @param('resolution.end_ramp')
-    @param('resolution.start_ramp')
-    def get_resolution(self, epoch, min_res, max_res, end_ramp, start_ramp):
-        assert min_res <= max_res
-
-        if epoch <= start_ramp:
-            return min_res
-
-        if epoch >= end_ramp:
-            return max_res
-
-        # otherwise, linearly interpolate to the nearest multiple of 32
-        interp = np.interp([epoch], [start_ramp, end_ramp], [min_res, max_res])
-        final_res = int(np.round(interp[0] / 32)) * 32
-        return final_res
-
     @param('training.momentum')
     @param('training.optimizer')
     @param('training.weight_decay')
@@ -212,14 +188,13 @@ class ImageNetTrainer:
     @param('training.batch_size')
     @param('training.distributed')
     @param('data.in_memory')
+    @param('validation.resolution')
     def create_train_loader(self, train_dataset, num_workers, batch_size,
-                            distributed, in_memory):
+                            distributed, in_memory,resolution):
         this_device = f'cuda:{self.gpu}'
         train_path = Path(train_dataset)
         assert train_path.is_file()
-
-        res = self.get_resolution(epoch=0)
-        self.decoder = RandomResizedCropRGBImageDecoder((res, res))
+        self.decoder = RandomResizedCropRGBImageDecoder((resolution, resolution))
         image_pipeline: List[Operation] = [
             self.decoder,
             RandomHorizontalFlip(),
@@ -295,8 +270,6 @@ class ImageNetTrainer:
     @param('logging.log_level')
     def train(self, epochs, log_level):
         for epoch in range(epochs):
-            res = self.get_resolution(epoch)
-            self.decoder.output_size = (res, res)
             train_loss = self.train_loop(epoch)
 
             if log_level > 0:
@@ -326,19 +299,13 @@ class ImageNetTrainer:
         return stats
 
     @param('model.arch')
-    @param('model.pretrained')
+    @param('model.input_size')
     @param('training.distributed')
-    @param('training.use_blurpool')
-    def create_model_and_scaler(self, arch, pretrained, distributed, use_blurpool):
+    def create_model_and_scaler(self, arch, size, distributed):
         scaler = GradScaler()
-        model = getattr(models, arch)(pretrained=pretrained)
-        model = define_model(args.dataset,args.norm_type,args.net_type,args.nch,args.depth,args.width,args.nclass,args.logger,args.size).to(args.device)
-        def apply_blurpool(mod: ch.nn.Module):
-            for (name, child) in mod.named_children():
-                if isinstance(child, ch.nn.Conv2d) and (np.max(child.stride) > 1 and child.in_channels >= 16): 
-                    setattr(mod, name, BlurPoolConv2d(child))
-                else: apply_blurpool(child)
-        if use_blurpool: apply_blurpool(model)
+        
+        model = define_model(net_type=arch, size=input_size)
+
 
         model = model.to(memory_format=ch.channels_last)
         model = model.to(self.gpu)

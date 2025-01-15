@@ -1,32 +1,37 @@
-def define_model(dataset,norm_type,net_type,nch,depth,width,nclass, size):
+def define_model(net_type='resnet18', size=224):
 
-    if  net_type == 'resnet':
-        model = RN.ResNet(dataset,
-                          depth,
-                          nclass,
-                          norm_type=norm_type,
-                          size=size,
-                          nch=nch)
-    elif net_type == 'resnet_ap':
-        model = RNAP.ResNetAP(dataset,
-                              depth,
-                              nclass,
-                              width=width,
-                              norm_type=norm_type,
-                              size=size,
-                              nch=nch)
-    elif net_type == 'efficient':
-        model = EfficientNet.from_name('efficientnet-b0', num_classes=nclass)
-    elif net_type == 'densenet':
-        model = DN.densenet_cifar(nclass)
-    elif net_type == 'convnet':
-        width = int(128 * width)
-        model = CN.ConvNet(nclass,
-                           net_norm=norm_type,
-                           net_depth=depth,
-                           net_width=width,
-                           channel=nch,
-                           im_size=(size, size))
+    # 定义一个字典映射 net_type 到 depth
+    resnet_depths = {
+        'resnet18': 18,
+        'resnet34': 34,
+        'resnet50': 50,
+        'resnet101': 101,
+        'resnet152': 152
+    }
+
+    # 根据 net_type 获取深度
+    if net_type in resnet_depths:
+        depth = resnet_depths[net_type]
     else:
-        raise Exception('unknown network architecture: {}'.format(net_type))
+        raise Exception('Unknown network architecture: {}'.format(net_type))
+
+    # 根据 net_type 创建对应的模型
+    if net_type == 'resnet':
+        model = RN.ResNet("imagenet",
+                          depth,
+                          1000,
+                          norm_type="batch",
+                          size=size,
+                          nch=3)
+    elif net_type == 'resnet_ap':
+        model = RNAP.ResNetAP("imagenet",
+                              depth,
+                              1000,
+                              width=1.0,
+                              norm_type="batch",
+                              size=size,
+                              nch=3)
+    else:
+        raise Exception('Unknown network architecture: {}'.format(net_type))
+
     return model
