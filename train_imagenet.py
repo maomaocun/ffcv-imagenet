@@ -6,7 +6,7 @@ import torch.distributed as dist
 ch.backends.cudnn.benchmark = True
 ch.autograd.profiler.emit_nvtx(False)
 ch.autograd.profiler.profile(False)
-
+import model
 from torchvision import models
 import torchmetrics
 import numpy as np
@@ -332,6 +332,7 @@ class ImageNetTrainer:
     def create_model_and_scaler(self, arch, pretrained, distributed, use_blurpool):
         scaler = GradScaler()
         model = getattr(models, arch)(pretrained=pretrained)
+        model = define_model(args.dataset,args.norm_type,args.net_type,args.nch,args.depth,args.width,args.nclass,args.logger,args.size).to(args.device)
         def apply_blurpool(mod: ch.nn.Module):
             for (name, child) in mod.named_children():
                 if isinstance(child, ch.nn.Conv2d) and (np.max(child.stride) > 1 and child.in_channels >= 16): 
@@ -416,9 +417,9 @@ class ImageNetTrainer:
     @param('logging.folder')
     def initialize_logger(self, folder):
         self.val_meters = {
-            'top_1': torchmetrics.Accuracy(task='multiclass', num_classes=1000, compute_on_step=False).to(self.gpu),
-            'top_5': torchmetrics.Accuracy(task='multiclass', num_classes=1000, compute_on_step=False, top_k=5).to(self.gpu),
-            'loss': MeanScalarMetric(compute_on_step=False).to(self.gpu)
+            'top_1': torchmetrics.Accuracy(task='multiclass', num_classes=1000).to(self.gpu),
+            'top_5': torchmetrics.Accuracy(task='multiclass', num_classes=1000, top_k=5).to(self.gpu),
+            'loss': MeanScalarMetric().to(self.gpu)
         }
 
         if self.gpu == 0:
